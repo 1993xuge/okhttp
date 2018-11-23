@@ -68,9 +68,18 @@ final class RealCall implements Call {
     this.timeout.timeout(client.callTimeoutMillis(), MILLISECONDS);
   }
 
+  /**
+   * 将 OkHttpClient 与 Request对象关联的实际方法
+   * @param client
+   * @param originalRequest
+   * @param forWebSocket
+   * @return
+   */
   static RealCall newRealCall(OkHttpClient client, Request originalRequest, boolean forWebSocket) {
     // Safely publish the Call instance to the EventListener.
+    // 创建newCall对象
     RealCall call = new RealCall(client, originalRequest, forWebSocket);
+    // 创建 EventListener对象
     call.eventListener = client.eventListenerFactory().create(call);
     return call;
   }
@@ -79,24 +88,43 @@ final class RealCall implements Call {
     return originalRequest;
   }
 
+  /**
+   * 同步请求
+   * @return
+   * @throws IOException
+   */
   @Override public Response execute() throws IOException {
+    // 1、首先利用 synchronized 加入了对象锁，防止多线程同时调用
     synchronized (this) {
+      // 判断executed是否为true，
+      // true表示当前的call已经被执行了，那么抛出异常。
+      // false表示没有被执行，那么将executed设置为true，并且继续进行执行。
       if (executed) throw new IllegalStateException("Already Executed");
       executed = true;
     }
+    // 2
     captureCallStackTrace();
+
+    // 3
     timeout.enter();
+
+    // 4、回调 callStart
     eventListener.callStart(this);
     try {
+      // 5、将 RealCall对象 加入到 dispatcher的同步队列中
       client.dispatcher().executed(this);
+
+      // 6、
       Response result = getResponseWithInterceptorChain();
       if (result == null) throw new IOException("Canceled");
       return result;
     } catch (IOException e) {
       e = timeoutExit(e);
+      // 发生异常，回调 callFailed
       eventListener.callFailed(this, e);
       throw e;
     } finally {
+      //
       client.dispatcher().finished(this);
     }
   }
@@ -113,16 +141,30 @@ final class RealCall implements Call {
 
   private void captureCallStackTrace() {
     Object callStackTrace = Platform.get().getStackTraceForCloseable("response.body().close()");
+    // retryAndFollowUpInterceptor加入了一个用于追踪堆栈信息的callStackTrace
     retryAndFollowUpInterceptor.setCallStackTrace(callStackTrace);
   }
 
+    /**
+     * 异步请求
+     * @param responseCallback
+     */
   @Override public void enqueue(Callback responseCallback) {
+      // 1、首先利用 synchronized 加入了对象锁，防止多线程同时调用
     synchronized (this) {
+        // 判断executed是否为true，
+        // true表示当前的call已经被执行了，那么抛出异常。
+        // false表示没有被执行，那么将executed设置为true，并且继续进行执行。
       if (executed) throw new IllegalStateException("Already Executed");
       executed = true;
     }
+    // 2
     captureCallStackTrace();
+
+    // 3、回调 callStart
     eventListener.callStart(this);
+
+    // 4、使用分发器
     client.dispatcher().enqueue(new AsyncCall(responseCallback));
   }
 
@@ -179,15 +221,25 @@ final class RealCall implements Call {
       assert (!Thread.holdsLock(client.dispatcher()));
       boolean success = false;
       try {
+          // 将该AsyncCall对象加入到线程池中。
+          // 在线程池中，会调用Runnable的run方法，AsyncCall继承自NamedRunnable。
+          // NamedRunnable中的run方法，会执行抽象方法 execute()
         executorService.execute(this);
         success = true;
       } catch (RejectedExecutionException e) {
+           //执行过程中发生了异常
         InterruptedIOException ioException = new InterruptedIOException("executor rejected");
         ioException.initCause(e);
+
+        // 回调 callFailed。eventListener是外部类RealCall的属性
         eventListener.callFailed(RealCall.this, ioException);
+
+        // responseCallback回调onFailure。responseCallback对象是从构造方法中传递过来的
         responseCallback.onFailure(RealCall.this, ioException);
       } finally {
         if (!success) {
+            // 如果线程池处理该请求失败了。调用dispatcher的finish方法。
+            // 成功，在execute()方法中已经执行了dispatcher的finish方法
           client.dispatcher().finished(this); // This call is no longer running!
         }
       }
@@ -197,6 +249,7 @@ final class RealCall implements Call {
       boolean signalledCallback = false;
       timeout.enter();
       try {
+        //
         Response response = getResponseWithInterceptorChain();
         if (retryAndFollowUpInterceptor.isCanceled()) {
           signalledCallback = true;
@@ -234,10 +287,16 @@ final class RealCall implements Call {
     return originalRequest.url().redact();
   }
 
+  /**
+   * 真正执行 网络请求的方法
+   * @return
+   * @throws IOException
+   */
   Response getResponseWithInterceptorChain() throws IOException {
     // Build a full stack of interceptors.
     List<Interceptor> interceptors = new ArrayList<>();
     interceptors.addAll(client.interceptors());
+
     interceptors.add(retryAndFollowUpInterceptor);
     interceptors.add(new BridgeInterceptor(client.cookieJar()));
     interceptors.add(new CacheInterceptor(client.internalCache()));

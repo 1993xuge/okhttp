@@ -132,6 +132,7 @@ public final class Dispatcher {
 
   void enqueue(AsyncCall call) {
     synchronized (this) {
+      // 将 call加入到 readyAsyncCalls队列当中
       readyAsyncCalls.add(call);
     }
     promoteAndExecute();
@@ -168,19 +169,30 @@ public final class Dispatcher {
     List<AsyncCall> executableCalls = new ArrayList<>();
     boolean isRunning;
     synchronized (this) {
+      // 遍历 readyAsyncCalls
       for (Iterator<AsyncCall> i = readyAsyncCalls.iterator(); i.hasNext(); ) {
         AsyncCall asyncCall = i.next();
 
+        // 如果 runningAsyncCalls的size大于最大请求数，则直接跳出循环，不再遍历readyAsyncCalls
         if (runningAsyncCalls.size() >= maxRequests) break; // Max capacity.
+
+        // 如果 该asyncCall所运行的主机上运行的请求数 大于 最大主机请求数，那么跳过执行该请求
         if (runningCallsForHost(asyncCall) >= maxRequestsPerHost) continue; // Host max capacity.
 
+        // 将该请求从 readyAsyncCalls队列中删除
         i.remove();
+        // 将该请求加入到 executableCalls
         executableCalls.add(asyncCall);
+
+        // 将该请求加入到 runningAsyncCalls中
         runningAsyncCalls.add(asyncCall);
       }
+
+      // runningAsyncCalls.size() + runningSyncCalls.size()
       isRunning = runningCallsCount() > 0;
     }
 
+    // 遍历 executableCalls，将其中的请求对象AsyncCall放入线程池中执行
     for (int i = 0, size = executableCalls.size(); i < size; i++) {
       AsyncCall asyncCall = executableCalls.get(i);
       asyncCall.executeOn(executorService());
@@ -189,7 +201,9 @@ public final class Dispatcher {
     return isRunning;
   }
 
-  /** Returns the number of running calls that share a host with {@code call}. */
+  /** Returns the number of running calls that share a host with {@code call}.
+   * 返回该主机上运行的请求书
+   * */
   private int runningCallsForHost(AsyncCall call) {
     int result = 0;
     for (AsyncCall c : runningAsyncCalls) {
@@ -199,7 +213,9 @@ public final class Dispatcher {
     return result;
   }
 
-  /** Used by {@code Call#execute} to signal it is in-flight. */
+  /** Used by {@code Call#execute} to signal it is in-flight.
+   * 调用该方法，将RealCall对象加入到 runningSyncCalls中
+   * */
   synchronized void executed(RealCall call) {
     runningSyncCalls.add(call);
   }
