@@ -256,13 +256,13 @@ final class RealCall implements Call {
             assert (!Thread.holdsLock(client.dispatcher()));
             boolean success = false;
             try {
-                // 将该AsyncCall对象加入到线程池中。
+                // 1、将该AsyncCall对象加入到线程池中。
                 // 在线程池中，会调用Runnable的run方法，AsyncCall继承自NamedRunnable。
                 // NamedRunnable中的run方法，会执行抽象方法 execute()
                 executorService.execute(this);
                 success = true;
             } catch (RejectedExecutionException e) {
-                //执行过程中发生了异常
+                //2、执行过程中发生了异常
                 InterruptedIOException ioException = new InterruptedIOException("executor rejected");
                 ioException.initCause(e);
 
@@ -273,7 +273,7 @@ final class RealCall implements Call {
                 responseCallback.onFailure(RealCall.this, ioException);
             } finally {
                 if (!success) {
-                    // 如果线程池处理该请求失败了。调用dispatcher的finish方法。
+                    // 3、如果线程池处理该请求失败了。调用dispatcher的finish方法。
                     // 成功，在execute()方法中已经执行了dispatcher的finish方法
                     client.dispatcher().finished(this); // This call is no longer running!
                 }
@@ -325,13 +325,14 @@ final class RealCall implements Call {
 
     /**
      * 真正执行 网络请求的方法
-     *
+     * 在该方法中创建拦截器链，通过依次执行每一个不同功能的拦截器来获取服务器的响应返回。
      * @return
      * @throws IOException
      */
     Response getResponseWithInterceptorChain() throws IOException {
         // Build a full stack of interceptors.
         List<Interceptor> interceptors = new ArrayList<>();
+        // 添加用户自定义的拦截器，也就是应用程序拦截器。
         interceptors.addAll(client.interceptors());
 
         //失败和重定向过滤器

@@ -46,6 +46,7 @@ public final class Dispatcher {
 
     /**
      * Executes calls. Created lazily.
+     * 线程池，用于执行请求
      */
     private @Nullable
     ExecutorService executorService;
@@ -58,7 +59,7 @@ public final class Dispatcher {
 
     /**
      * Running asynchronous calls. Includes canceled calls that haven't finished yet.
-     * 正在运行的异步请求
+     * 表示 正在运行的异步请求的队列，其中包含了已经取消了的但未完成的任务。
      */
     private final Deque<AsyncCall> runningAsyncCalls = new ArrayDeque<>();
 
@@ -184,31 +185,31 @@ public final class Dispatcher {
         List<AsyncCall> executableCalls = new ArrayList<>();
         boolean isRunning;
         synchronized (this) {
-            // 遍历 readyAsyncCalls
+            // 1、遍历 readyAsyncCalls
             for (Iterator<AsyncCall> i = readyAsyncCalls.iterator(); i.hasNext(); ) {
                 AsyncCall asyncCall = i.next();
 
-                // 如果 runningAsyncCalls的size大于最大请求数，则直接跳出循环，不再遍历readyAsyncCalls
+                // 1.1 如果 runningAsyncCalls的size大于最大请求数，则直接跳出循环，不再遍历readyAsyncCalls
                 if (runningAsyncCalls.size() >= maxRequests) break; // Max capacity.
 
-                // 如果 该asyncCall所运行的主机上运行的请求数 大于 最大主机请求数，那么跳过执行该请求
+                // 1.2 如果 该asyncCall所运行的主机上运行的请求数 大于 最大主机请求数，那么跳过执行该请求
                 if (runningCallsForHost(asyncCall) >= maxRequestsPerHost)
                     continue; // Host max capacity.
 
-                // 将该请求从 readyAsyncCalls队列中删除
+                // 1.3 将该请求从 readyAsyncCalls队列中删除
                 i.remove();
-                // 将该请求加入到 executableCalls
+                // 1.4 将该请求加入到 executableCalls
                 executableCalls.add(asyncCall);
 
-                // 将该请求加入到 runningAsyncCalls中
+                // 1.5 将该请求加入到 runningAsyncCalls中
                 runningAsyncCalls.add(asyncCall);
             }
 
-            // runningAsyncCalls.size() + runningSyncCalls.size()
+            // 2、runningAsyncCalls.size() + runningSyncCalls.size()
             isRunning = runningCallsCount() > 0;
         }
 
-        // 遍历 executableCalls，将其中的请求对象AsyncCall放入线程池中执行
+        // 3、遍历 executableCalls，将其中的请求对象AsyncCall放入线程池中执行
         for (int i = 0, size = executableCalls.size(); i < size; i++) {
             AsyncCall asyncCall = executableCalls.get(i);
             asyncCall.executeOn(executorService());
@@ -240,6 +241,8 @@ public final class Dispatcher {
 
     /**
      * Used by {@code AsyncCall#run} to signal completion.
+     *
+     * 结束异步请求
      */
     void finished(AsyncCall call) {
         finished(runningAsyncCalls, call);
@@ -247,6 +250,8 @@ public final class Dispatcher {
 
     /**
      * Used by {@code Call#execute} to signal completion.
+     *
+     * 结束同步请求
      */
     void finished(RealCall call) {
         finished(runningSyncCalls, call);
@@ -255,13 +260,17 @@ public final class Dispatcher {
     private <T> void finished(Deque<T> calls, T call) {
         Runnable idleCallback;
         synchronized (this) {
+            // 1、将请求从相应的队列中移出。
             if (!calls.remove(call)) throw new AssertionError("Call wasn't in-flight!");
             idleCallback = this.idleCallback;
         }
 
+        // 2、继续尝试执行readyAsyncCalls中缓存的异步请求。
+        // 如果runningAsyncCalls和runningSyncCalls队列中都没有请求在执行，isRunning = false
         boolean isRunning = promoteAndExecute();
 
         if (!isRunning && idleCallback != null) {
+            // 3、如果没有请求执行isRunning = false，并且设置了idleCallback，则需要回调该callback
             idleCallback.run();
         }
     }
